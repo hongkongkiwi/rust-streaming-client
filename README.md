@@ -1,4 +1,4 @@
-# Bodycam Client - Rust Implementation
+# Streaming Client - Rust Implementation
 
 A Rust-based body camera client for the PatrolSight security monitoring platform. This client simulates a body camera device with real-time recording, incident detection, and hardware integration capabilities.
 
