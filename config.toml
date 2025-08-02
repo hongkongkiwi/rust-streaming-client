@@ -1,0 +1,52 @@
+# Bodycam Client Configuration
+
+# Server configuration
+server_url = "http://localhost:3000"
+
+# Device provisioning (these will be set after registration)
+device_id = null
+device_key = null
+site_id = null
+tenant_id = null
+
+# Simulation mode - set to true for testing on macOS/without hardware
+[simulation]
+enabled = true
+auto_incidents = true
+incident_frequency = 60
+simulate_battery = true
+battery_drain_rate = 0.5
+simulate_storage = true
+storage_usage_rate = 0.1
+
+# Hardware configuration
+[hardware]
+camera_index = 0
+microphone = true
+gps = true
+accelerometer = true
+battery_capacity = 4000
+storage_capacity = 64000000000  # 64GB
+
+# Recording settings
+[recording]
+resolution = "1920x1080"
+fps = 30
+bitrate = 5000000
+duration_limit = null
+segment_duration = 300
+encryption = true
+
+# Audio settings
+[audio]
+enabled = true
+sample_rate = 44100
+channels = 2
+bitrate = 128000
+
+# Network settings
+[network]
+upload_bandwidth = 5000000
+retry_attempts = 3
+timeout = 30
+compression = true

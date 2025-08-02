@@ -1,0 +1,167 @@
+# Bodycam Hardware Configuration
+# Copy this file to hardware.toml and customize for your specific hardware
+
+# GPIO Configuration for Linux systems
+[gpio]
+enabled = true
+export_path = "/sys/class/gpio/export"
+value_path = "/sys/class/gpio/gpio{}/value"
+
+# GPIO pins configuration
+[[gpio.pins]]
+number = 17
+direction = "Output"
+active_low = false
+description = "Recording status LED"
+function = { Led = "Recording" }
+
+[[gpio.pins]]
+number = 18
+direction = "Output"
+active_low = false
+description = "Power LED"
+function = { Led = "Power" }
+
+[[gpio.pins]]
+number = 19
+direction = "Input"
+active_low = true
+description = "Record button"
+function = { Button = "Record" }
+
+[[gpio.pins]]
+number = 20
+direction = "Input"
+active_low = true
+description = "Emergency button"
+function = { Button = "Emergency" }
+
+[[gpio.pins]]
+number = 21
+direction = "Input"
+active_low = true
+description = "Power button"
+function = { Button = "Power" }
+
+[[gpio.pins]]
+number = 26
+direction = "Output"
+active_low = false
+description = "Buzzer for alerts"
+function = "Buzzer"
+
+# Camera configuration
+[camera]
+enabled = true
+# Linux camera device path
+device_path = "/dev/video0"
+resolution = "1920x1080"
+fps = 30
+bitrate = 5000000
+rotation = 0
+flip_horizontal = false
+flip_vertical = false
+
+# Audio configuration
+[audio]
+enabled = true
+# Linux audio device path
+device_path = "hw:1,0"
+sample_rate = 44100
+channels = 2
+bitrate = 128000
+
+# LED configuration
+[leds]
+enabled = true
+
+[[leds.leds]]
+name = "recording"
+gpio_pin = 17
+color = "red"
+
+[[leds.leds]]
+name = "power"
+gpio_pin = 18
+color = "green"
+
+[[leds.leds]]
+name = "wifi"
+gpio_pin = 22
+color = "blue"
+
+# LED blink patterns
+[[leds.leds.blink_patterns]]
+name = "recording"
+on_duration = 1000
+off_duration = 1000
+repeat_count = null
+
+[[leds.leds.blink_patterns]]
+name = "low_battery"
+on_duration = 200
+off_duration = 200
+repeat_count = 10
+
+# Button configuration
+[buttons]
+enabled = true
+
+[[buttons.buttons]]
+name = "record"
+gpio_pin = 19
+button_type = "Record"
+debounce_ms = 50
+long_press_ms = 1000
+
+[[buttons.buttons]]
+name = "emergency"
+gpio_pin = 20
+button_type = "Emergency"
+debounce_ms = 50
+long_press_ms = 2000
+
+[[buttons.buttons]]
+name = "power"
+gpio_pin = 21
+button_type = "Power"
+debounce_ms = 100
+long_press_ms = 3000
+
+# Display configuration (for devices with screens)
+[display]
+enabled = false
+device_path = "/dev/fb0"
+width = 320
+height = 240
+color_depth = 16
+
+# Sensor configuration
+[sensors]
+
+# Accelerometer for motion detection
+[sensors.accelerometer]
+enabled = true
+device_path = "/dev/i2c-1"
+sensitivity = 2.0
+sample_rate = 100
+
+# GPS for location tracking
+[sensors.gps]
+enabled = true
+device_path = "/dev/ttyUSB0"
+update_frequency = 1
+
+# Battery monitoring
+[sensors.battery]
+enabled = true
+capacity_path = "/sys/class/power_supply/BAT0/capacity"
+voltage_path = "/sys/class/power_supply/BAT0/voltage_now"
+current_path = "/sys/class/power_supply/BAT0/current_now"
+temperature_path = "/sys/class/power_supply/BAT0/temp"
+
+# Temperature monitoring
+[sensors.temperature]
+enabled = true
+device_path = "/sys/class/thermal/thermal_zone0/temp"
+critical_temp = 80.0
