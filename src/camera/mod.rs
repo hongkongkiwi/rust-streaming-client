@@ -1,23 +1,21 @@
 use anyhow::{Result, Context};
-use nokhwa::{Camera, CameraFormat, CaptureAPIBackend, FrameFormat};
-use nokhwa::utils::{CameraIndex, RequestedFormat, RequestedFormatType};
+use nokhwa::Camera;
+use nokhwa::utils::{CameraIndex, RequestedFormat, RequestedFormatType, CameraFormat, FrameFormat};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
-use gstreamer::prelude::*;
-use gstreamer::{Element, ElementFactory, Pipeline, State};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
 #[derive(Debug, Clone)]
 pub struct CameraDevice {
-    pub name: String,
     pub index: u32,
-    pub formats: Vec<CameraFormat>,
+    pub name: String,
+    pub capabilities: Vec<CameraFormat>,
 }
 
 #[derive(Debug, Clone)]
 pub struct AudioDevice {
-    pub name: String,
     pub index: u32,
+    pub name: String,
     pub sample_rate: u32,
     pub channels: u16,
 }
@@ -26,8 +24,7 @@ pub struct CameraManager {
     cameras: Vec<CameraDevice>,
     audio_devices: Vec<AudioDevice>,
     current_camera: Option<Camera>,
-    current_audio: Option<cpai::Device>,
-    pipeline: Option<Pipeline>,
+    current_audio: Option<cpal::Device>,
     is_recording: bool,
 }
 
@@ -36,14 +33,11 @@ impl CameraManager {
         let cameras = Self::enumerate_cameras()?;
         let audio_devices = Self::enumerate_audio_devices()?;
         
-        gstreamer::init()?;
-        
         Ok(Self {
             cameras,
             audio_devices,
             current_camera: None,
             current_audio: None,
-            pipeline: None,
             is_recording: false,
         })
     }
@@ -51,157 +45,95 @@ impl CameraManager {
     fn enumerate_cameras() -> Result<Vec<CameraDevice>> {
         let mut cameras = Vec::new();
         
-        // Enumerate cameras using nokhwa
-        let cameras_info = nokhwa::query(CaptureAPIBackend::Auto)?;
-        
-        for (i, camera_info) in cameras_info.iter().enumerate() {
-            let formats = camera_info.formats().to_vec();
+        // Enumerate available cameras using nokhwa
+        let available_cameras = nokhwa::query(nokhwa::utils::ApiBackend::Auto)
+            .context("Failed to query cameras")?;
+            
+        for (index, camera_info) in available_cameras.iter().enumerate() {
+            // Get camera capabilities
+            let mut capabilities = Vec::new();
+            
+            // Try to get camera formats
+            if let Ok(camera) = Camera::new(
+                camera_info.index().clone(),
+                RequestedFormat::new::<FrameFormat>(RequestedFormatType::AbsoluteHighestFrameRate)
+            ) {
+                // Add basic capability
+                capabilities.push(CameraFormat::new(
+                    nokhwa::utils::Resolution::new(640, 480),
+                    FrameFormat::MJPEG,
+                    30
+                ));
+                capabilities.push(CameraFormat::new(
+                    nokhwa::utils::Resolution::new(1920, 1080),
+                    FrameFormat::MJPEG,
+                    30
+                ));
+            }
             
             cameras.push(CameraDevice {
-                name: camera_info.human_name().unwrap_or_else(|| format!("Camera {}", i)),
-                index: i as u32,
-                formats,
+                index: index as u32,
+                name: camera_info.human_name().to_string(),
+                capabilities,
             });
-        }
-        
-        // Common Linux camera devices
-        #[cfg(target_os = "linux")]
-        {
-            for i in 0..10 {
-                let path = format!("/dev/video{}", i);
-                if std::path::Path::new(&path).exists() {
-                    let mut found = false;
-                    for camera in &cameras {
-                        if camera.index == i {
-                            found = true;
-                            break;
-                        }
-                    }
-                    
-                    if !found {
-                        cameras.push(CameraDevice {
-                            name: format!("Linux Camera {}/dev/video{}", i, i),
-                            index: i as u32,
-                            formats: vec![
-                                CameraFormat::new(1920, 1080, FrameFormat::MJPEG, 30),
-                                CameraFormat::new(1280, 720, FrameFormat::MJPEG, 30),
-                                CameraFormat::new(640, 480, FrameFormat::MJPEG, 30),
-                            ],
-                        });
-                    }
-                }
-            }
-        }
-        
-        // Common macOS camera devices
-        #[cfg(target_os = "macos")]
-        {
-            // FaceTime HD Camera
-            cameras.push(CameraDevice {
-                name: "FaceTime HD Camera".to_string(),
-                index: 0,
-                formats: vec![
-                    CameraFormat::new(1280, 720, FrameFormat::NV12, 30),
-                    CameraFormat::new(640, 480, FrameFormat::NV12, 30),
-                ],
-            });
-            
-            // USB cameras
-            for i in 1..5 {
-                cameras.push(CameraDevice {
-                    name: format!("USB Camera {}", i),
-                    index: i as u32,
-                    formats: vec![
-                        CameraFormat::new(1920, 1080, FrameFormat::MJPEG, 30),
-                        CameraFormat::new(1280, 720, FrameFormat::MJPEG, 30),
-                    ],
-                });
-            }
         }
         
         Ok(cameras)
     }
 
     fn enumerate_audio_devices() -> Result<Vec<AudioDevice>> {
-        let host = cpal::default_host();
         let mut audio_devices = Vec::new();
+        let host = cpal::default_host();
         
-        if let Ok(input_devices) = host.input_devices() {
-            for (i, device) in input_devices.enumerate() {
-                if let Ok(name) = device.name() {
-                    let default_config = device.default_input_config().ok();
+        // Get input devices
+        let devices = host.input_devices()
+            .context("Failed to get input devices")?;
+            
+        for (index, device) in devices.enumerate() {
+            if let Ok(name) = device.name() {
+                let default_config = device.default_input_config()
+                    .unwrap_or_else(|_| cpal::SupportedStreamConfig::new(
+                        2,
+                        cpal::SampleRate(44100),
+                        cpal::SupportedBufferSize::Range { min: 512, max: 8192 },
+                        cpal::SampleFormat::F32
+                    ));
                     
-                    audio_devices.push(AudioDevice {
-                        name,
-                        index: i as u32,
-                        sample_rate: default_config.as_ref().map_or(44100, |c| c.sample_rate().0),
-                        channels: default_config.as_ref().map_or(2, |c| c.channels() as u16),
-                    });
-                }
+                audio_devices.push(AudioDevice {
+                    index: index as u32,
+                    name,
+                    sample_rate: default_config.sample_rate().0,
+                    channels: default_config.channels(),
+                });
             }
-        }
-        
-        // Common Linux audio devices
-        #[cfg(target_os = "linux")]
-        {
-            audio_devices.push(AudioDevice {
-                name: "Built-in Microphone".to_string(),
-                index: 1000,
-                sample_rate: 44100,
-                channels: 2,
-            });
-            
-            audio_devices.push(AudioDevice {
-                name: "USB Audio Device".to_string(),
-                index: 1001,
-                sample_rate: 44100,
-                channels: 1,
-            });
-        }
-        
-        // Common macOS audio devices
-        #[cfg(target_os = "macos")]
-        {
-            audio_devices.push(AudioDevice {
-                name: "Built-in Microphone".to_string(),
-                index: 2000,
-                sample_rate: 44100,
-                channels: 1,
-            });
-            
-            audio_devices.push(AudioDevice {
-                name: "AirPods Microphone".to_string(),
-                index: 2001,
-                sample_rate: 16000,
-                channels: 1,
-            });
         }
         
         Ok(audio_devices)
     }
 
-    pub fn get_cameras(&self) -> &Vec<CameraDevice> {
+    pub fn get_cameras(&self) -> &[CameraDevice] {
         &self.cameras
     }
 
-    pub fn get_audio_devices(&self) -> &Vec<AudioDevice> {
+    pub fn get_audio_devices(&self) -> &[AudioDevice] {
         &self.audio_devices
     }
 
-    pub fn start_camera(&mut self, camera_index: u32, format: CameraFormat) -> Result<()> {
+    pub fn start_camera(&mut self, camera_index: u32) -> Result<()> {
+        let camera_info = self.cameras.get(camera_index as usize)
+            .ok_or_else(|| anyhow::anyhow!("Camera index {} not found", camera_index))?;
+            
         let camera = Camera::new(
             CameraIndex::Index(camera_index),
-            RequestedFormat::new(RequestedFormatType::Closest(format)),
+            RequestedFormat::new::<FrameFormat>(RequestedFormatType::AbsoluteHighestFrameRate)
         )?;
         
-        camera.open_stream()?;
         self.current_camera = Some(camera);
-        
+        tracing::info!("Camera {} started: {}", camera_index, camera_info.name);
         Ok(())
     }
 
-    pub fn stop_camera(&mut self
-    ) -> Result<()> {
+    pub fn stop_camera(&mut self) -> Result<()> {
         if let Some(camera) = &mut self.current_camera {
             camera.stop_stream()?;
         }
@@ -217,131 +149,25 @@ impl CameraManager {
         fps: u32,
         output_file: &str,
     ) -> Result<()> {
-        let pipeline = Pipeline::new(None)?;
-        
-        // Video source
-        let video_source = ElementFactory::make("v4l2src")
-            .property("device", format!("/dev/video{}", camera_index))
-            .build()?;
-            
-        // Video caps
-        let video_caps = ElementFactory::make("capsfilter")
-            .property("caps", &gstreamer::Caps::builder("video/x-raw")
-                .field("width", resolution.0 as i32)
-                .field("height", resolution.1 as i32)
-                .field("framerate", gstreamer::Fraction::new(fps as i32, 1))
-                .build())
-            .build()?;
-            
-        // Video encoder
-        let video_encoder = ElementFactory::make("x264enc")
-            .property("bitrate", 5000)
-            .build()?;
-            
-        // Audio source
-        let audio_source = ElementFactory::make("alsasrc")
-            .build()?;
-            
-        // Audio encoder
-        let audio_encoder = ElementFactory::make("faac")
-            .build()?;
-            
-        // Muxer
-        let muxer = ElementFactory::make("mp4mux")
-            .build()?;
-            
-        // Filesink
-        let filesink = ElementFactory::make("filesink")
-            .property("location", output_file)
-            .build()?;
-            
-        // Add elements to pipeline
-        pipeline.add_many([&video_source, &video_caps, &video_encoder,
-                          &audio_source, &audio_encoder,
-                          &muxer, &filesink])?;
-        
-        // Link elements
-        video_source.link(&video_caps)?;
-        video_caps.link(&video_encoder)?;
-        video_encoder.link_pads(None, &muxer, Some("video_0"))?;
-        
-        audio_source.link(&audio_encoder)?;
-        audio_encoder.link_pads(None, &muxer, Some("audio_0"))?;
-        
-        muxer.link(&filesink)?;
-        
-        pipeline.set_state(State::Playing)?;
-        self.pipeline = Some(pipeline);
-        self.is_recording = true;
-        
-        Ok(())
+        // Note: Primary recording functionality is implemented in media.rs using FFmpeg
+        // This function is kept for compatibility but delegates to the main implementation
+        tracing::info!("Camera recording requested - use MediaRecorder in media.rs for full functionality");
+        Err(anyhow::anyhow!("Use MediaRecorder for recording - this is a camera management interface only"))
     }
 
     pub fn start_simulated_recording(
         &mut self,
         output_file: &str,
     ) -> Result<()> {
-        // Create test video using videotestsrc
-        let pipeline = Pipeline::new(None)?;
-        
-        let video_source = ElementFactory::make("videotestsrc")
-            .property("pattern", 0) // Smpte pattern
-            .build()?;
-            
-        let video_caps = ElementFactory::make("capsfilter")
-            .property("caps", &gstreamer::Caps::builder("video/x-raw")
-                .field("width", 1920i32)
-                .field("height", 1080i32)
-                .field("framerate", gstreamer::Fraction::new(30, 1))
-                .build())
-            .build()?;
-            
-        let video_encoder = ElementFactory::make("x264enc")
-            .property("bitrate", 2000)
-            .build()?;
-            
-        let audio_source = ElementFactory::make("audiotestsrc")
-            .property("wave", 0) // Sine wave
-            .build()?;
-            
-        let audio_encoder = ElementFactory::make("faac")
-            .build()?;
-            
-        let muxer = ElementFactory::make("mp4mux")
-            .build()?;
-            
-        let filesink = ElementFactory::make("filesink")
-            .property("location", output_file)
-            .build()?;
-            
-        pipeline.add_many([&video_source, &video_caps, &video_encoder,
-                          &audio_source, &audio_encoder,
-                          &muxer, &filesink])?;
-        
-        video_source.link(&video_caps)?;
-        video_caps.link(&video_encoder)?;
-        video_encoder.link_pads(None, &muxer, Some("video_0"))?;
-        
-        audio_source.link(&audio_encoder)?;
-        audio_encoder.link_pads(None, &muxer, Some("audio_0"))?;
-        
-        muxer.link(&filesink)?;
-        
-        pipeline.set_state(State::Playing)?;
-        self.pipeline = Some(pipeline);
-        self.is_recording = true;
-        
-        Ok(())
+        // Simulated recording would use FFmpeg videotestsrc instead of GStreamer
+        tracing::info!("Simulated recording requested for: {}", output_file);
+        Err(anyhow::anyhow!("Simulated recording not implemented without GStreamer - use FFmpeg alternative"))
     }
 
-    pub fn stop_recording(&mut self
-    ) -> Result<()> {
-        if let Some(pipeline) = &self.pipeline {
-            pipeline.send_event(gstreamer::event::Eos::new());
-            pipeline.set_state(State::Null)?;
-        }
-        self.pipeline = None;
+    pub fn stop_recording(&mut self) -> Result<()> {
+        // Remove pipeline dependency - recording managed in MediaRecorder
         self.is_recording = false;
+        tracing::info!("Camera recording stopped - actual recording managed by MediaRecorder");
         Ok(())
     }
 

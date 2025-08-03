@@ -1,0 +1,43 @@
+name: Claude Code Review
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+jobs:
+  claude-review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      id-token: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+      
+      - name: Run Claude Code Review
+        uses: anthropics/claude-code-action@beta
+        env:
+          ANTHROPIC_BASE_URL: ${{ secrets.ANTHROPIC_BASE_URL }}
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          direct_prompt: |
+            Please review this pull request for the Rust device client and provide feedback on:
+            - Rust security best practices and memory safety
+            - Device-level security monitoring implementation
+            - System monitoring and hardware interaction security
+            - Network communication security for device-to-server
+            - Authentication and authorization for device access
+            - Secure storage of credentials and sensitive data
+            - Error handling and crash reporting security
+            - Resource management and performance optimization
+            - Integration with security monitoring platform APIs
+            - Real-time alerting and incident response capabilities
+            - Cross-platform security considerations (Windows, macOS, Linux)
+            
+            This review runs in parallel with CodeRabbit for comprehensive AI review coverage.
+            Be constructive and security-focused in your feedback.

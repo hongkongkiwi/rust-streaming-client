@@ -1,10 +1,10 @@
 use anyhow::Result;
 use rustyline::error::ReadlineError;
-use rustyline::{Editor, Helper, Completer, Hinter, Validator, Context};
+use rustyline::{Editor, Helper, Context};
 use rustyline::completion::{Completer, Pair};
 use rustyline::hint::{Hinter, HistoryHinter};
 use rustyline::validate::{Validator, ValidationContext, ValidationResult};
-use std::collections::HashSet;
+use std::collections::{HashSet, HashMap};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio::sync::Mutex;
@@ -19,7 +19,6 @@ pub struct SimulationRepl {
     event_rx: Option<mpsc::UnboundedReceiver<HardwareEvent>>,
 }
 
-#[derive(Helper, Completer, Hinter, Validator)]
 struct ReplHelper {
     commands: HashSet<String>,
     hinter: HistoryHinter,
@@ -59,7 +58,7 @@ impl Completer for ReplHelper {
         &self,
         line: &str,
         pos: usize,
-        _ctx: &Context<'_
+        _ctx: &Context<'_>
     ) -> rustyline::Result<(Vec<Pair>, usize)> {
         let matches: Vec<Pair> = self.commands
             .iter()
@@ -74,11 +73,13 @@ impl Completer for ReplHelper {
     }
 }
 
+impl Helper for ReplHelper {}
+
 impl Hinter for ReplHelper {
     fn hint(&self,
         line: &str,
         pos: usize,
-        ctx: &Context<'_
+        ctx: &Context<'_>
     ) -> Option<String> {
         self.hinter.hint(line, pos, ctx)
     }
@@ -196,10 +197,10 @@ impl SimulationRepl {
             Some("press") => {
                 if let Some(button) = parts.get(1) {
                     let button_type = match *button {
-                        "record" => super::ButtonType::Record,
-                        "emergency" => super::ButtonType::Emergency,
-                        "power" => super::ButtonType::Power,
-                        "menu" => super::ButtonType::Menu,
+                        "record" => crate::hardware::ButtonType::Record,
+                        "emergency" => crate::hardware::ButtonType::Emergency,
+                        "power" => crate::hardware::ButtonType::Power,
+                        "menu" => crate::hardware::ButtonType::Menu,
                         _ => {
                             println!("Unknown button: {}", button);
                             return Ok(());
@@ -219,9 +220,9 @@ impl SimulationRepl {
             Some("longpress") => {
                 if let Some(button) = parts.get(1) {
                     let button_type = match *button {
-                        "record" => super::ButtonType::Record,
-                        "emergency" => super::ButtonType::Emergency,
-                        "power" => super::ButtonType::Power,
+                        "record" => crate::hardware::ButtonType::Record,
+                        "emergency" => crate::hardware::ButtonType::Emergency,
+                        "power" => crate::hardware::ButtonType::Power,
                         _ => {
                             println!("Unknown button: {}", button);
                             return Ok(());
@@ -299,7 +300,7 @@ impl SimulationRepl {
         match event {
             HardwareEvent::ButtonPressed { button, duration } => {
                 match button {
-                    super::ButtonType::Record => {
+                    crate::hardware::ButtonType::Record => {
                         if duration.is_some() {
                             // Long press - stop recording
                             let _ = device.stop_recording().await;
@@ -310,11 +311,11 @@ impl SimulationRepl {
                             println!("Short press - recording started");
                         }
                     }
-                    super::ButtonType::Emergency => {
+                    crate::hardware::ButtonType::Emergency => {
                         let _ = device.trigger_incident("emergency", "high").await;
                         println!("Emergency button pressed");
                     }
-                    super::ButtonType::Power => {
+                    crate::hardware::ButtonType::Power => {
                         println!("Power button pressed");
                     }
                     _ => {}
@@ -322,7 +323,7 @@ impl SimulationRepl {
             }
             HardwareEvent::BatteryLow { level } => {
                 println!("⚠️  Battery low: {}%", level);
-                let _ = device.hardware.set_led("battery", super::LedState::Blink {
+                let _ = device.hardware.set_led("battery", crate::hardware::LedState::Blink {
                     on_duration: 200,
                     off_duration: 200,
                     repeat: Some(10),

@@ -50,3 +50,12 @@ upload_bandwidth = 5000000
 retry_attempts = 3
 timeout = 30
 compression = true
+
+# Sentry error tracking configuration (optional)
+[sentry]
+# dsn = "https://your-sentry-dsn@o1234567.ingest.sentry.io/1234567"
+# environment = "development"  # development, staging, production
+# sample_rate = 1.0  # 0.0 to 1.0 (100% in development, lower in production)
+# traces_sample_rate = 0.1  # Performance monitoring sample rate
+# enable_tracing = true
+# debug = false

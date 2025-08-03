@@ -1,0 +1,733 @@
+import { Button, CheckBox, ComboBox, GroupBox, HorizontalBox, ListView, ScrollView, Slider, SpinBox, StandardListView, TabWidget, VerticalBox, GridBox } from "std-widgets.slint";
+
+export struct DeviceInfo {
+    platform: string,
+    architecture: string,
+    os-version: string,
+    hostname: string,
+    cpu-model: string,
+    cpu-cores: int,
+    memory-gb: int,
+}
+
+export struct NetworkInfo {
+    interface: string,
+    status: string,
+    ip-address: string,
+    mac-address: string,
+    type: string,
+    signal-strength: int,
+}
+
+export struct CameraInfo {
+    name: string,
+    device-path: string,
+    resolutions: [string],
+    formats: [string],
+    is-available: bool,
+}
+
+export struct StorageInfo {
+    name: string,
+    total-gb: int,
+    available-gb: int,
+    filesystem: string,
+    is-removable: bool,
+}
+
+export struct StorageBreakdown {
+    quality: string,
+    video-count: int,
+    total-size-mb: int,
+    percentage: float,
+}
+
+export struct WifiNetwork {
+    ssid: string,
+    signal-strength: int,
+    security: string,
+    is-connected: bool,
+}
+
+export struct NetworkStatus {
+    wifi-connected: bool,
+    lte-connected: bool,
+    wifi-networks: [WifiNetwork],
+    lte-signal: int,
+    lte-carrier: string,
+}
+
+export struct SensorInfo {
+    name: string,
+    device-path: string,
+    is-available: bool,
+    range: string,
+    accuracy: string,
+}
+
+export struct PowerInfo {
+    battery-present: bool,
+    battery-level: int,
+    is-charging: bool,
+    power-source: string,
+    estimated-runtime: string,
+}
+
+export component MainWindow inherits Window {
+    in-out property <bool> is-recording: false;
+    in-out property <string> current-status: "Idle";
+    in-out property <int> battery-level: 85;
+    in-out property <bool> is-charging: false;
+    in-out property <string> connection-status: "Connected";
+    in-out property <int> recording-time: 0;
+    in-out property <DeviceInfo> device-info: { platform: "Linux", architecture: "x86_64", os-version: "Ubuntu 22.04", hostname: "patrol-001", cpu-model: "Intel Core i7", cpu-cores: 8, memory-gb: 16 };
+    in-out property <[NetworkInfo]> network-interfaces: [
+        { interface: "wlan0", status: "Connected", ip-address: "192.168.1.100", mac-address: "aa:bb:cc:dd:ee:ff", type: "WiFi", signal-strength: -42 },
+        { interface: "eth0", status: "Disconnected", ip-address: "", mac-address: "11:22:33:44:55:66", type: "Ethernet", signal-strength: 0 }
+    ];
+    in-out property <[CameraInfo]> cameras: [
+        { name: "Integrated Camera", device-path: "/dev/video0", resolutions: ["1920x1080", "1280x720", "640x480"], formats: ["MJPEG", "YUYV"], is-available: true },
+        { name: "USB Camera", device-path: "/dev/video1", resolutions: ["1280x720", "640x480"], formats: ["MJPEG"], is-available: false }
+    ];
+    in-out property <[StorageInfo]> storage-devices: [
+        { name: "Internal Storage", total-gb: 512, available-gb: 256, filesystem: "ext4", is-removable: false },
+        { name: "SD Card", total-gb: 64, available-gb: 32, filesystem: "vfat", is-removable: true }
+    ];
+    in-out property <[StorageBreakdown]> storage-breakdown: [
+        { quality: "Ultra", video-count: 15, total-size-mb: 4500, percentage: 45.0 },
+        { quality: "High", video-count: 42, total-size-mb: 3200, percentage: 32.0 },
+        { quality: "Medium", video-count: 78, total-size-mb: 1800, percentage: 18.0 },
+        { quality: "Low", video-count: 23, total-size-mb: 500, percentage: 5.0 }
+    ];
+    in-out property <NetworkStatus> network-status: {
+        wifi-connected: true,
+        lte-connected: false,
+        wifi-networks: [
+            { ssid: "PatrolSight-Network", signal-strength: -42, security: "WPA3", is-connected: true },
+            { ssid: "CityWiFi", signal-strength: -65, security: "WPA2", is-connected: false },
+            { ssid: "Mobile-Hotspot", signal-strength: -58, security: "WPA2", is-connected: false }
+        ],
+        lte-signal: 3,
+        lte-carrier: "Verizon"
+    };
+    in-out property <[SensorInfo]> sensors: [
+        { name: "GPS", device-path: "/dev/ttyUSB0", is-available: true, range: "Global", accuracy: "3-5m" },
+        { name: "Accelerometer", device-path: "/dev/iio:device0", is-available: true, range: "±16g", accuracy: "0.1g" },
+        { name: "Gyroscope", device-path: "/dev/iio:device0", is-available: true, range: "±2000°/s", accuracy: "0.1°/s" },
+        { name: "Magnetometer", device-path: "/dev/iio:device0", is-available: true, range: "±4.9G", accuracy: "0.1G" }
+    ];
+    in-out property <PowerInfo> power-info: { battery-present: true, battery-level: 85, is-charging: false, power-source: "Battery", estimated-runtime: "4h 30m" };
+
+    callback start-recording();
+    callback stop-recording();
+    callback refresh-capabilities();
+    callback export-report();
+    callback enable-feature(string feature);
+    callback disable-feature(string feature);
+    callback clear-storage();
+    callback request-config-update();
+    callback scan-wifi();
+
+    preferred-width: 1024px;
+    preferred-height: 768px;
+    background: Palette.alternate-background;
+    title: "PatrolSight Client";
+
+    TabWidget {
+        Tab {
+            title: "Status";
+            VerticalBox {
+                alignment: start;
+                spacing: 16px;
+                
+                HorizontalBox {
+                    alignment: center;
+                    spacing: 20px;
+                    
+                    Rectangle {
+                        width: 200px;
+                        height: 200px;
+                        border-radius: 100px;
+                        background: is-recording ? #ff4444 : #44ff44;
+                        
+                        Text {
+                            text: is-recording ? "RECORDING" : "IDLE";
+                            color: white;
+                            font-size: 20px;
+                            font-weight: bold;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                    
+                    VerticalBox {
+                        alignment: center;
+                        spacing: 10px;
+                        
+                        Text {
+                            text: "Status: " + current-status;
+                            font-size: 18px;
+                            font-weight: bold;
+                        }
+                        
+                        Text {
+                            text: "Connection: " + connection-status;
+                            font-size: 14px;
+                            color: Palette.foreground.mix(0.7);
+                        }
+                        
+                        Text {
+                            text: "Recording Time: " + (recording-time / 3600) + "h " + ((recording-time % 3600) / 60) + "m " + (recording-time % 60) + "s";
+                            font-size: 14px;
+                            color: Palette.foreground.mix(0.7);
+                        }
+                    }
+                }
+                
+                HorizontalBox {
+                    alignment: center;
+                    spacing: 20px;
+                    
+                    Button {
+                        text: is-recording ? "Stop Recording" : "Start Recording";
+                        primary: !is-recording;
+                        background: is-recording ? #ff4444 : #44ff44;
+                        
+                        clicked => {
+                            if (is-recording) {
+                                stop-recording();
+                            } else {
+                                start-recording();
+                            }
+                        }
+                    }
+                    
+                    Button {
+                        text: "Refresh";
+                        icon: @image-url("refresh.svg");
+                        clicked => { refresh-capabilities(); }
+                    }
+                    
+                    Button {
+                        text: "Export Report";
+                        icon: @image-url("export.svg");
+                        clicked => { export-report(); }
+                    }
+                }
+                
+                GroupBox {
+                    title: "Device Information";
+                    
+                    GridBox {
+                        columns: 2;
+                        spacing: 10px;
+                        
+                        Text { text: "Platform:"; }
+                        Text { text: device-info.platform; }
+                        
+                        Text { text: "Architecture:"; }
+                        Text { text: device-info.architecture; }
+                        
+                        Text { text: "OS Version:"; }
+                        Text { text: device-info.os-version; }
+                        
+                        Text { text: "Hostname:"; }
+                        Text { text: device-info.hostname; }
+                        
+                        Text { text: "CPU:"; }
+                        Text { text: device-info.cpu-model + " (" + device-info.cpu-cores + " cores)"; }
+                        
+                        Text { text: "Memory:"; }
+                        Text { text: device-info.memory-gb + " GB"; }
+                    }
+                }
+                
+                GroupBox {
+                    title: "Power Status";
+                    
+                    VerticalBox {
+                        spacing: 10px;
+                        
+                        HorizontalBox {
+                            Text { text: "Battery Level:"; }
+                            Rectangle {
+                                width: 200px;
+                                height: 20px;
+                                border-width: 1px;
+                                border-color: Palette.border;
+                                background: Palette.alternate-background;
+                                
+                                Rectangle {
+                                    width: power-info.battery-level * 2px;
+                                    height: 20px;
+                                    background: power-info.battery-level > 20 ? #44ff44 : #ff4444;
+                                }
+                                
+                                Text {
+                                    text: power-info.battery-level + "%";
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                    font-size: 12px;
+                                }
+                            }
+                        }
+                        
+                        HorizontalBox {
+                            Text { text: "Power Source:"; }
+                            Text { text: power-info.power-source; }
+                        }
+                        
+                        HorizontalBox {
+                            Text { text: "Estimated Runtime:"; }
+                            Text { text: power-info.estimated-runtime; }
+                        }
+                        
+                        HorizontalBox {
+                            Text { text: "Charging:"; }
+                            Text { 
+                                text: power-info.is-charging ? "Yes" : "No"; 
+                                color: power-info.is-charging ? #44ff44 : Palette.foreground;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        Tab {
+            title: "Network";
+            ScrollView {
+                VerticalBox {
+                    alignment: start;
+                    spacing: 15px;
+                    
+                    // Network Status Overview
+                    GroupBox {
+                        title: "Network Status";
+                        
+                        VerticalBox {
+                            spacing: 10px;
+                            
+                            HorizontalBox {
+                                Text { text: "WiFi Status:"; font-weight: bold; }
+                                Text { 
+                                    text: network-status.wifi-connected ? "Connected" : "Disconnected"; 
+                                    color: network-status.wifi-connected ? #44ff44 : #ff4444;
+                                }
+                            }
+                            
+                            HorizontalBox {
+                                Text { text: "LTE Status:"; font-weight: bold; }
+                                Text { 
+                                    text: network-status.lte-connected ? "Connected (" + network-status.lte-carrier + ")" : "Disconnected"; 
+                                    color: network-status.lte-connected ? #44ff44 : #ff4444;
+                                }
+                            }
+                            
+                            if (network-status.lte-connected): HorizontalBox {
+                                Text { text: "LTE Signal:"; font-weight: bold; }
+                                Text { 
+                                    text: network-status.lte-signal + " bars"; 
+                                    color: network-status.lte-signal > 3 ? #44ff44 : 
+                                           network-status.lte-signal > 2 ? #ffaa00 : #ff4444;
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Available WiFi Networks
+                    GroupBox {
+                        title: "Available WiFi Networks";
+                        
+                        VerticalBox {
+                            spacing: 10px;
+                            
+                            HorizontalBox {
+                                alignment: center;
+                                
+                                Button {
+                                    text: "Scan for Networks";
+                                    clicked => { scan-wifi(); }
+                                }
+                            }
+                            
+                            for network[i] in network-status.wifi-networks: Rectangle {
+                                background: Palette.alternate-background.mix(0.3);
+                                border-radius: 5px;
+                                padding: 10px;
+                                
+                                HorizontalBox {
+                                    spacing: 10px;
+                                    
+                                    VerticalBox {
+                                        alignment: start;
+                                        
+                                        Text { text: network.ssid; font-weight: bold; }
+                                        Text { text: network.security; font-size: 12px; }
+                                    }
+                                    
+                                    VerticalBox {
+                                        alignment: end;
+                                        
+                                        Text { 
+                                            text: network.signal-strength + " dBm"; 
+                                            color: network.signal-strength > -50 ? #44ff44 : 
+                                                   network.signal-strength > -70 ? #ffaa00 : #ff4444;
+                                        }
+                                        
+                                        if (network.is-connected): Text { 
+                                            text: "Connected"; 
+                                            color: #44ff44; 
+                                            font-weight: bold;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Network Interfaces
+                    GroupBox {
+                        title: "Network Interfaces";
+                        
+                        VerticalBox {
+                            spacing: 10px;
+                            
+                            for interface[i] in network-interfaces: Rectangle {
+                                background: Palette.alternate-background.mix(0.3);
+                                border-radius: 5px;
+                                padding: 10px;
+                                
+                                GridBox {
+                                    columns: 2;
+                                    spacing: 5px;
+                                    
+                                    Text { text: "Interface:"; font-weight: bold; }
+                                    Text { text: interface.interface; }
+                                    
+                                    Text { text: "Status:"; font-weight: bold; }
+                                    Text { 
+                                        text: interface.status; 
+                                        color: interface.status == "Connected" ? #44ff44 : #ff4444;
+                                    }
+                                    
+                                    Text { text: "IP Address:"; font-weight: bold; }
+                                    Text { text: interface.ip-address; }
+                                    
+                                    Text { text: "MAC Address:"; font-weight: bold; }
+                                    Text { text: interface.mac-address; }
+                                    
+                                    Text { text: "Type:"; font-weight: bold; }
+                                    Text { text: interface.type; }
+                                    
+                                    Text { text: "Signal Strength:"; font-weight: bold; }
+                                    Text { 
+                                        text: interface.signal-strength + " dBm"; 
+                                        color: interface.signal-strength > -50 ? #44ff44 : 
+                                               interface.signal-strength > -70 ? #ffaa00 : #ff4444;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        Tab {
+            title: "Cameras";
+            ScrollView {
+                VerticalBox {
+                    alignment: start;
+                    spacing: 10px;
+                    
+                    Text {
+                        text: "Camera Devices";
+                        font-size: 18px;
+                        font-weight: bold;
+                    }
+                    
+                    for camera[i] in cameras: Rectangle {
+                        background: Palette.alternate-background.mix(0.3);
+                        border-radius: 5px;
+                        padding: 10px;
+                        
+                        VerticalBox {
+                            spacing: 5px;
+                            
+                            HorizontalBox {
+                                Text { text: camera.name; font-weight: bold; }
+                                CheckBox { 
+                                    checked: camera.is-available; 
+                                    enabled: false; 
+                                }
+                            }
+                            
+                            Text { text: "Device: " + camera.device-path; font-size: 12px; }
+                            
+                            HorizontalBox {
+                                Text { text: "Resolutions:"; font-weight: bold; }
+                                for res[j] in camera.resolutions: Text { text: res; }
+                            }
+                            
+                            HorizontalBox {
+                                Text { text: "Formats:"; font-weight: bold; }
+                                for fmt[k] in camera.formats: Text { text: fmt; }
+                            }
+                            
+                            Button {
+                                text: "Test Camera";
+                                enabled: camera.is-available;
+                                clicked => { enable-feature("camera_test_" + camera.device-path); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        Tab {
+            title: "Storage";
+            ScrollView {
+                VerticalBox {
+                    alignment: start;
+                    spacing: 15px;
+                    
+                    Text {
+                        text: "Storage Usage";
+                        font-size: 18px;
+                        font-weight: bold;
+                    }
+                    
+                    // Overall storage summary
+                    GroupBox {
+                        title: "Storage Summary";
+                        
+                        VerticalBox {
+                            spacing: 10px;
+                            
+                            for storage[i] in storage-devices: VerticalBox {
+                                spacing: 5px;
+                                
+                                HorizontalBox {
+                                    Text { text: storage.name; font-weight: bold; }
+                                    Text { 
+                                        text: storage.is-removable ? "(Removable)" : "(Internal)"; 
+                                        font-size: 12px;
+                                        color: Palette.foreground.mix(0.7);
+                                    }
+                                }
+                                
+                                HorizontalBox {
+                                    Text { text: "Used: " + (storage.total-gb - storage.available-gb) + " GB / " + storage.total-gb + " GB"; }
+                                    Text { 
+                                        text: "(" + (100 - (storage.available-gb * 100 / storage.total-gb)) + "% used)"; 
+                                        color: (100 - (storage.available-gb * 100 / storage.total-gb)) > 80 ? #ff4444 : Palette.foreground;
+                                    }
+                                }
+                                
+                                Rectangle {
+                                    width: 100%;
+                                    height: 20px;
+                                    border-width: 1px;
+                                    border-color: Palette.border;
+                                    background: Palette.alternate-background;
+                                    
+                                    Rectangle {
+                                        width: (100 - (storage.available-gb * 100 / storage.total-gb)) * 1%;
+                                        height: 20px;
+                                        background: (100 - (storage.available-gb * 100 / storage.total-gb)) > 80 ? #ff4444 : 
+                                                   (100 - (storage.available-gb * 100 / storage.total-gb)) > 60 ? #ffaa00 : #44ff44;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Storage breakdown by quality
+                    GroupBox {
+                        title: "Storage Breakdown by Quality";
+                        
+                        VerticalBox {
+                            spacing: 10px;
+                            
+                            for breakdown[i] in storage-breakdown: Rectangle {
+                                background: Palette.alternate-background.mix(0.3);
+                                border-radius: 5px;
+                                padding: 10px;
+                                
+                                HorizontalBox {
+                                    spacing: 10px;
+                                    
+                                    VerticalBox {
+                                        alignment: start;
+                                        
+                                        Text { text: breakdown.quality; font-weight: bold; }
+                                        Text { text: breakdown.video-count + " videos"; font-size: 12px; }
+                                    }
+                                    
+                                    VerticalBox {
+                                        alignment: end;
+                                        
+                                        Text { text: breakdown.total-size-mb + " MB"; font-weight: bold; }
+                                        Text { text: breakdown.percentage + "%"; font-size: 12px; }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    // Storage management
+                    GroupBox {
+                        title: "Storage Management";
+                        
+                        HorizontalBox {
+                            alignment: center;
+                            spacing: 10px;
+                            
+                            Button {
+                                text: "Clear All Storage";
+                                background: #ff4444;
+                                color: white;
+                                clicked => { clear-storage(); }
+                            }
+                            
+                            Button {
+                                text: "Request Config Update";
+                                clicked => { request-config-update(); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        Tab {
+            title: "Sensors";
+            ScrollView {
+                VerticalBox {
+                    alignment: start;
+                    spacing: 10px;
+                    
+                    Text {
+                        text: "Sensors";
+                        font-size: 18px;
+                        font-weight: bold;
+                    }
+                    
+                    for sensor[i] in sensors: Rectangle {
+                        background: Palette.alternate-background.mix(0.3);
+                        border-radius: 5px;
+                        padding: 10px;
+                        
+                        GridBox {
+                            columns: 2;
+                            spacing: 5px;
+                            
+                            Text { text: "Name:"; font-weight: bold; }
+                            Text { text: sensor.name; }
+                            
+                            Text { text: "Device:"; font-weight: bold; }
+                            Text { text: sensor.device-path; font-size: 12px; }
+                            
+                            Text { text: "Available:"; font-weight: bold; }
+                            Text { 
+                                text: sensor.is-available ? "Yes" : "No"; 
+                                color: sensor.is-available ? #44ff44 : #ff4444;
+                            }
+                            
+                            Text { text: "Range:"; font-weight: bold; }
+                            Text { text: sensor.range; }
+                            
+                            Text { text: "Accuracy:"; font-weight: bold; }
+                            Text { text: sensor.accuracy; }
+                        }
+                        
+                        Button {
+                            text: "Calibrate";
+                            enabled: sensor.is-available;
+                            clicked => { enable-feature("calibrate_" + sensor.name); }
+                        }
+                    }
+                }
+            }
+        }
+        
+        Tab {
+            title: "Settings";
+            ScrollView {
+                VerticalBox {
+                    alignment: start;
+                    spacing: 15px;
+                    
+                    GroupBox {
+                        title: "Device Information";
+                        
+                        VerticalBox {
+                            spacing: 10px;
+                            
+                            Text {
+                                text: "All configuration settings are managed remotely.";
+                                font-size: 14px;
+                                color: Palette.foreground.mix(0.7);
+                            }
+                            
+                            GridBox {
+                                columns: 2;
+                                spacing: 10px;
+                                
+                                Text { text: "Device ID:"; font-weight: bold; }
+                                Text { text: "device-001"; }
+                                
+                                Text { text: "Server:"; font-weight: bold; }
+                                Text { text: "https://api.patrolsight.com"; }
+                                
+                                Text { text: "Status:"; font-weight: bold; }
+                                Text { text: "Provisioned"; color: #44ff44; }
+                            }
+                        }
+                    }
+                    
+                    GroupBox {
+                        title: "Remote Configuration";
+                        
+                        VerticalBox {
+                            alignment: center;
+                            spacing: 10px;
+                            
+                            Text {
+                                text: "Settings are managed via remote configuration";
+                                font-size: 12px;
+                                color: Palette.foreground.mix(0.7);
+                            }
+                            
+                            Button {
+                                text: "Request Config Update";
+                                clicked => { request-config-update(); }
+                            }
+                        }
+                    }
+                    
+                    GroupBox {
+                        title: "Device Controls";
+                        
+                        VerticalBox {
+                            alignment: center;
+                            spacing: 10px;
+                            
+                            Button {
+                                text: "Refresh Capabilities";
+                                clicked => { refresh-capabilities(); }
+                            }
+                            
+                            Button {
+                                text: "Export Report";
+                                clicked => { export-report(); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

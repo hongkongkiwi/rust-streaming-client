@@ -1,0 +1,48 @@
+# PatrolSight Client Release Configuration
+
+[package]
+name = "patrolsight-client"
+description = "PatrolSight Security Monitoring Platform Client"
+author = "PatrolSight Security Team"
+license = "Proprietary"
+homepage = "https://patrolsight.com"
+repository = "https://github.com/patrolsight/client"
+
+[build]
+target_platforms = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin"
+]
+optimization = "release"
+strip_symbols = true
+
+[signing]
+algorithm = "RSA-SHA256"
+key_size = 4096
+certificate_duration_days = 365
+
+[package_formats]
+create_tar = true
+create_zip = true
+create_deb = true
+create_rpm = true
+
+[update_channels]
+stable = { auto_update = true, testing_required = false }
+beta = { auto_update = false, testing_required = true }
+alpha = { auto_update = false, testing_required = true }
+development = { auto_update = false, testing_required = false }
+
+[files]
+binary_name = "patrolsight-client"
+config_files = ["config/default.toml"]
+scripts = ["scripts/install.sh", "scripts/uninstall.sh"]
+docs = ["README.md", "CHANGELOG.md", "LICENSE"]
+
+[metadata]
+supported_os = ["Linux", "Windows", "macOS"]
+min_system_version = "1.0.0"
+recommended_ram = "2GB"
+recommended_disk = "1GB"

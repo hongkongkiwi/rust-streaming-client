@@ -20,9 +20,20 @@ mod ui;
 mod gps;
 mod integrity;
 mod api;
+mod validation;
+mod streaming;
+mod recovery;
+mod encryption;
+mod resource_manager;
+mod diagnostics;
+mod sentry_integration;
+mod error_handling;
+mod capabilities;
+mod release_manager;
 
 use config::Config;
 use device::BodycamDevice;
+use release_manager::{ReleaseManager, UpdateChannel};
 
 #[derive(Parser)]
 #[command(name = "bodycam-client")]
@@ -83,10 +94,24 @@ enum Commands {
     },
     
     /// Stream live feed
-    Stream,
+    Stream {
+        /// Streaming quality (low, medium, high, ultra)
+        #[arg(short, long, default_value = "medium")]
+        quality: String,
+        
+        /// Include audio in stream
+        #[arg(short, long)]
+        audio: bool,
+    },
     
-    /// Run diagnostics
+    /// Stop live streaming
+    StopStream,
+    
+    /// Run basic diagnostics
     Diagnose,
+
+    /// Run comprehensive diagnostics
+    ComprehensiveDiagnose,
 
     /// Play audio file or TTS
     PlayAudio {
@@ -114,6 +139,42 @@ enum Commands {
 
     /// Start interactive simulation mode
     Simulate,
+    
+    /// Check for updates
+    CheckUpdates {
+        /// Update channel to check
+        #[arg(short, long, default_value = "stable")]
+        channel: String,
+        
+        /// Download if update is available
+        #[arg(short, long)]
+        download: bool,
+        
+        /// Apply update automatically
+        #[arg(short, long)]
+        apply: bool,
+    },
+    
+    /// Update to latest version
+    Update {
+        /// Force update even if already up to date
+        #[arg(short, long)]
+        force: bool,
+        
+        /// Update channel to use
+        #[arg(short, long, default_value = "stable")]
+        channel: String,
+    },
+    
+    /// Rollback to previous version
+    Rollback {
+        /// Force rollback without confirmation
+        #[arg(short, long)]
+        force: bool,
+    },
+    
+    /// Show version information
+    Version,
     
     /// Start UI mode (default)
     Ui,
@@ -143,17 +204,51 @@ use std::path::PathBuf;
     // Load configuration
     let config = Config::load(config_path.to_str().unwrap()).await?;
     
+    // Initialize Sentry error tracking
+    let sentry_config = sentry_integration::SentryConfig::from_config(&config);
+    let _sentry_guard = sentry_integration::init_sentry(&sentry_config)?;
+    
+    // Set initial device context if available
+    sentry_integration::set_device_context(
+        config.device_id.as_deref(),
+        config.site_id.as_deref(),
+        config.tenant_id.as_deref(),
+    );
+    
+    info!("Application configuration loaded and Sentry initialized");
+    
     // Initialize device
     let mut device = BodycamDevice::new(config).await?;
     
     match cli.command {
         Commands::Register { name, site_id } => {
-            device.register(&name, &site_id).await?;
-            info!("Device registered successfully");
+            sentry_integration::add_device_breadcrumb("register", Some(&format!("name: {}, site_id: {}", name, site_id)));
+            match device.register(&name, &site_id).await {
+                Ok(_) => {
+                    info!("Device registered successfully");
+                    sentry_integration::add_device_breadcrumb("register", Some("success"));
+                }
+                Err(e) => {
+                    error!("Device registration failed: {}", e);
+                    sentry_capture_error!(&e, "operation" => "device_register", "device_name" => name, "site_id" => site_id);
+                    return Err(e);
+                }
+            }
         }
         Commands::Start { duration, incident_id } => {
-            device.start_recording(duration, incident_id).await?;
-            info!("Recording started");
+            sentry_integration::add_device_breadcrumb("start_recording", 
+                Some(&format!("duration: {:?}, incident_id: {:?}", duration, incident_id)));
+            match device.start_recording(duration, incident_id).await {
+                Ok(_) => {
+                    info!("Recording started");
+                    sentry_integration::add_device_breadcrumb("start_recording", Some("success"));
+                }
+                Err(e) => {
+                    error!("Failed to start recording: {}", e);
+                    sentry_capture_error!(&e, "operation" => "start_recording", "duration" => duration.unwrap_or(0), "incident_id" => incident_id.unwrap_or_default());
+                    return Err(e);
+                }
+            }
         }
         Commands::Stop => {
             device.stop_recording().await?;
@@ -164,16 +259,35 @@ use std::path::PathBuf;
             println!("{}", serde_json::to_string_pretty(&status)?);
         }
         Commands::TriggerIncident { incident_type, severity } => {
-            let incident_id = device.trigger_incident(&incident_type, &severity).await?;
-            info!("Incident triggered: {}", incident_id);
+            sentry_integration::add_device_breadcrumb("trigger_incident", 
+                Some(&format!("type: {}, severity: {}", incident_type, severity)));
+            match device.trigger_incident(&incident_type, &severity).await {
+                Ok(incident_id) => {
+                    info!("Incident triggered: {}", incident_id);
+                    sentry_integration::add_device_breadcrumb("trigger_incident", Some("success"));
+                }
+                Err(e) => {
+                    error!("Failed to trigger incident: {}", e);
+                    sentry_capture_error!(&e, "operation" => "trigger_incident", "incident_type" => incident_type, "severity" => severity);
+                    return Err(e);
+                }
+            }
         }
-        Commands::Stream => {
-            device.start_streaming().await?;
-            info!("Streaming started");
+        Commands::Stream { quality, audio } => {
+            let stream_id = device.start_streaming(Some(&quality), Some(audio)).await?;
+            info!("Streaming started: {}", stream_id);
+        }
+        Commands::StopStream => {
+            device.stop_streaming().await?;
+            info!("Streaming stopped");
         }
         Commands::Diagnose => {
             let report = device.diagnose().await?;
             println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        Commands::ComprehensiveDiagnose => {
+            let comprehensive_report = device.run_comprehensive_diagnostics().await?;
+            println!("{}", serde_json::to_string_pretty(&comprehensive_report)?);
         }
         Commands::PlayAudio { source, volume, loop_playback, preset, tts_text } => {
             let audio_source = if let Some(text) = tts_text {
@@ -214,10 +328,146 @@ use std::path::PathBuf;
             let mut sim_repl = simulation::SimulationRepl::new(device_arc);
             sim_repl.run().await?;
         }
+        Commands::CheckUpdates { channel, download, apply } => {
+            let channel = match channel.as_str() {
+                "stable" => UpdateChannel::Stable,
+                "beta" => UpdateChannel::Beta,
+                "alpha" => UpdateChannel::Alpha,
+                "development" => UpdateChannel::Development,
+                _ => UpdateChannel::Stable,
+            };
+
+            let release_manager = ReleaseManager::new(
+                &config_dir,
+                "https://updates.patrolsight.com",
+                env!("CARGO_PKG_VERSION"),
+                channel,
+            )?;
+
+            match release_manager.check_for_updates().await? {
+                Some(release) => {
+                    println!("Update available: {} -> {}", 
+                        release_manager.get_current_version(), 
+                        release.version);
+                    println!("Release date: {}", release.release_date);
+                    println!("Size: {} bytes", release.size);
+                    println!("Changelog:");
+                    for change in &release.changelog {
+                        println!("  - {}", change);
+                    }
+
+                    if download {
+                        let download_path = release_manager.download_update(&release).await?;
+                        println!("Downloaded to: {}", download_path.display());
+
+                        if apply {
+                            release_manager.apply_update(&download_path, &release).await?;
+                            println!("Update applied. Restart required.");
+                        }
+                    }
+                }
+                None => {
+                    println!("No updates available.");
+                }
+            }
+        }
+        Commands::Update { force, channel } => {
+            let channel = match channel.as_str() {
+                "stable" => UpdateChannel::Stable,
+                "beta" => UpdateChannel::Beta,
+                "alpha" => UpdateChannel::Alpha,
+                "development" => UpdateChannel::Development,
+                _ => UpdateChannel::Stable,
+            };
+
+            let release_manager = ReleaseManager::new(
+                &config_dir,
+                "https://updates.patrolsight.com",
+                env!("CARGO_PKG_VERSION"),
+                channel,
+            )?;
+
+            if !force {
+                match release_manager.check_for_updates().await? {
+                    Some(release) => {
+                        let download_path = release_manager.download_update(&release).await?;
+                        release_manager.apply_update(&download_path, &release).await?;
+                        println!("Update applied. Restart required.");
+                    }
+                    None => {
+                        println!("Already up to date.");
+                    }
+                }
+            } else {
+                println!("Force update requested...");
+                // In a real implementation, this would fetch latest regardless
+            }
+        }
+        Commands::Rollback { force } => {
+            let release_manager = ReleaseManager::new(
+                &config_dir,
+                "https://updates.patrolsight.com",
+                env!("CARGO_PKG_VERSION"),
+                UpdateChannel::Stable,
+            )?;
+
+            if !force {
+                print!("Are you sure you want to rollback? (y/N): ");
+                use std::io::{self, Write};
+                io::stdout().flush()?;
+                
+                let mut input = String::new();
+                io::stdin().read_line(&mut input)?;
+                
+                if !input.trim().eq_ignore_ascii_case("y") {
+                    println!("Rollback cancelled.");
+                    return Ok(());
+                }
+            }
+
+            release_manager.rollback().await?;
+            println!("Rollback completed. Restart required.");
+        }
+        Commands::Version => {
+            println!("PatrolSight Client v{}", env!("CARGO_PKG_VERSION"));
+            println!("Build date: {}", env!("BUILD_DATE", "unknown"));
+            println!("Git commit: {}", env!("GIT_COMMIT", "unknown"));
+            
+            let release_manager = ReleaseManager::new(
+                &config_dir,
+                "https://updates.patrolsight.com",
+                env!("CARGO_PKG_VERSION"),
+                UpdateChannel::Stable,
+            )?;
+            
+            println!("Current channel: {}", 
+                match release_manager.get_update_channel() {
+                    UpdateChannel::Stable => "stable",
+                    UpdateChannel::Beta => "beta",
+                    UpdateChannel::Alpha => "alpha",
+                    UpdateChannel::Development => "development",
+                });
+        }
         Commands::Ui | _ => {
             if cli.headless {
                 // Headless mode - run background services
                 info!("Starting in headless mode");
+                
+                // Detect and report capabilities
+                let detector = capabilities::CapabilityDetector::new(false);
+                match detector.detect_capabilities().await {
+                    Ok(caps) => {
+                        info!("Device capabilities detected: {:#?}", caps);
+                        
+                        // Report capabilities to backend
+                        if let Ok(json) = serde_json::to_string_pretty(&caps) {
+                            info!("Capabilities JSON: {}", json);
+                        }
+                    }
+                    Err(e) => {
+                        error!("Failed to detect capabilities: {}", e);
+                    }
+                }
                 
                 // Keep device running
                 let device_arc = Arc::new(Mutex::new(device));
@@ -237,17 +487,11 @@ use std::path::PathBuf;
                 tokio::signal::ctrl_c().await?;
                 info!("Shutting down headless mode");
             } else {
-                // UI mode
-                info!("Starting UI mode");
+                // UI mode - use new Slint UI
+                info!("Starting UI mode with comprehensive device capabilities");
                 
-                let camera_manager = crate::camera::CameraManager::new()?;
-                let ui = crate::ui::BodycamUI::new(
-                    device.config.clone(),
-                    device,
-                    Some(config_path),
-                )?;
-                
-                ui.run().await?;
+                // Run the new Slint UI
+                crate::ui::run_ui().await?;
             }
         }
     }

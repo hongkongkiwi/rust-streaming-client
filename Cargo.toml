@@ -1,9 +1,10 @@
 [package]
-name = "bodycam-client"
+name = "patrolsight-client"
 version = "0.1.0"
 edition = "2021"
 authors = ["PatrolSight Security"]
-description = "Body camera client for security monitoring platform"
+description = "PatrolSight security monitoring platform client"
+build = "build.rs"
 
 [dependencies]
 tokio = { version = "1.0", features = ["full"] }
@@ -17,25 +18,57 @@ clap = { version = "4.0", features = ["derive"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
 anyhow = "1.0"
-base64 = "0.21"
+thiserror = "1.0"
+sentry = { version = "0.34", features = ["tracing", "tower", "backtrace", "contexts", "panic", "debug-images"] }
+base64 = "0.22"
 sha2 = "0.10"
 hmac = "0.12"
 rand = "0.8"
 async-trait = "0.1"
+ed25519-dalek = { version = "2.0", features = ["rand_core"] }
+x25519-dalek = "2.0"
+url = "2.0"
+futures = "0.3"
+aes-gcm = "0.10"
+argon2 = "0.5"
+zeroize = "1.6"
+regex = "1.10"
 rustyline = "12.0"
-slint = "1.6"
-gstreamer = "0.22"
-gstreamer-app = "0.22"
-gstreamer-video = "0.22"
-gstreamer-audio = "0.22"
+slint = "1.7"
+# gstreamer = "0.22"
+# gstreamer-app = "0.22"
+# gstreamer-video = "0.22"
+# gstreamer-audio = "0.22"
 nokhwa = { version = "0.10", features = ["input-native"] }
-openal = "0.3"
+openal = "0.2"
 cpal = "0.15"
 rodio = "0.17"
+# Convex client for backend integration
+convex = "0.7"
+tungstenite = "0.21"
+tokio-tungstenite = "0.21"
+hex = "0.4"
+# Additional dependencies for real-time features
+tokio-stream = "0.1"
+futures-util = "0.3"
+
+# Additional dependencies for upload management and chunking
+md5 = "0.7"
 
 [dev-dependencies]
 tempfile = "3.0"
+tokio-test = "0.4"
+mockall = "0.12"
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+
+[lib]
+name = "patrolsight_client"
+path = "src/lib.rs"
 
 [[bin]]
-name = "bodycam-client"
+name = "patrolsight-client"
 path = "src/main.rs"
+
+[[bench]]
+name = "power_benchmarks"
+harness = false

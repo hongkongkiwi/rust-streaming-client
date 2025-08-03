@@ -4,6 +4,8 @@ use uuid::Uuid;
 use sha2::{Sha256, Digest};
 use hmac::{Hmac, Mac};
 use base64::{Engine as _, engine::general_purpose};
+use ed25519_dalek::{SigningKey, VerifyingKey};
+use rand::rngs::OsRng;
 
 use crate::config::Config;
 
@@ -106,7 +108,7 @@ impl Authenticator {
         let timestamp = chrono::Utc::now().timestamp();
         let nonce = Uuid::new_v4().to_string();
         
-        let message = format!("{}:{}:{", device_id, timestamp, nonce);
+        let message = format!("{}:{}:{}", device_id, timestamp, nonce);
         let signature = self.sign_message(&message, device_key);
 
         let auth_request = serde_json::json!({
@@ -162,12 +164,16 @@ impl Authenticator {
     }
 
     fn generate_keypair(&self) -> KeyPair {
-        // In a real implementation, use proper cryptographic key generation
-        let public_key = general_purpose::STANDARD.encode(
-            Sha256::digest(b"device-public-key").as_slice()
-        );
+        let mut csprng = OsRng {};
+        let signing_key = SigningKey::generate(&mut csprng);
+        let verifying_key: VerifyingKey = (&signing_key).into();
         
-        KeyPair { public_key }
+        let public_key = general_purpose::STANDARD.encode(verifying_key.as_bytes());
+        
+        KeyPair { 
+            public_key,
+            private_key: signing_key,
+        }
     }
 
     fn sign_message(&self, message: &str, key: &str) -> String {
@@ -181,4 +187,5 @@ impl Authenticator {
 
 struct KeyPair {
     public_key: String,
+    private_key: SigningKey,
 }

@@ -1,0 +1,33 @@
+# Rust build artifacts
+target/
+Cargo.lock
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files
+.env
+.env.local
+
+# Logs
+*.log
+
+# Build artifacts
+dist/
+build/
+
+# Temporary files
+*.tmp
+*.temp
+
+# Rust specific
+cargo-timing-*.html
+.cargo/registry/
+.cargo/git/

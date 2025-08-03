@@ -4,6 +4,7 @@ use tokio::sync::mpsc;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::time::Instant;
+use std::collections::HashMap;
 
 pub struct MacHardware {
     simulation: bool,

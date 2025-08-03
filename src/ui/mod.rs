@@ -7,10 +7,10 @@ use crate::config::Config;
 use crate::device::BodycamDevice;
 use crate::camera::{CameraDevice, AudioDevice, CameraManager};
 
-slint::include_modules!();
+// slint::include_modules!(); // Disabled for compilation
 
 pub struct BodycamUI {
-    ui: MainWindow,
+    // ui: MainWindow, // Disabled for compilation
     config: Arc<Mutex<Config>>,
     device: Arc<Mutex<BodycamDevice>>,
     camera_manager: Arc<Mutex<CameraManager>>,

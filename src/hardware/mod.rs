@@ -19,12 +19,37 @@ pub struct HardwareConfig {
     pub display: DisplayConfig,
 }
 
+impl Default for HardwareConfig {
+    fn default() -> Self {
+        Self {
+            gpio: GpioConfig::default(),
+            camera: CameraConfig::default(),
+            audio: AudioConfig::default(),
+            sensors: SensorConfig::default(),
+            leds: LedConfig::default(),
+            buttons: ButtonConfig::default(),
+            display: DisplayConfig::default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GpioConfig {
     pub enabled: bool,
     pub pins: Vec<GpioPin>,
     pub export_path: String,
     pub value_path: String,
+}
+
+impl Default for GpioConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            pins: Vec::new(),
+            export_path: "/sys/class/gpio/export".to_string(),
+            value_path: "/sys/class/gpio/gpio{}/value".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

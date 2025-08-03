@@ -10,6 +10,7 @@ use chrono::Utc;
 use crate::config::{Config, VideoQuality};
 use crate::buffer::{BufferSegment, CircularBuffer};
 use crate::integrity::{IntegrityManager, VideoIntegrity, IntegrityVerification};
+use crate::encryption::{MediaEncryptor, EncryptionMetadata};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RecordingSegment {
@@ -56,6 +57,7 @@ pub struct MediaRecorder {
     current_segments: HashMap<VideoQuality, RecordingSegment>,
     recording_processes: HashMap<VideoQuality, tokio::process::Child>,
     buffer: CircularBuffer,
+    encryptor: Option<MediaEncryptor>,
 }
 
 impl MediaRecorder {
@@ -74,7 +76,22 @@ impl MediaRecorder {
             current_segments: HashMap::new(),
             recording_processes: HashMap::new(),
             buffer,
+            encryptor: None,
         }
+    }
+
+    pub async fn initialize_encryption(&mut self, encryption_key: Option<String>) -> Result<()> {
+        if let Some(key) = encryption_key {
+            let mut encryptor = MediaEncryptor::new(self.device_id.clone());
+            if key.starts_with("password:") {
+                let password = &key[9..]; // Remove "password:" prefix
+                encryptor.initialize_with_password(password).await?;
+            } else {
+                encryptor.initialize_with_device_key(&key).await?;
+            }
+            self.encryptor = Some(encryptor);
+        }
+        Ok(())
     }
 
     pub async fn start(&mut self) -> Result<()> {
@@ -109,7 +126,11 @@ impl MediaRecorder {
                 codec: quality_config.codec.clone(),
                 audio_enabled: self.config.audio.enabled,
                 audio_codec: "aac".to_string(),
-                encryption_key: None,
+                encryption_key: if self.encryptor.is_some() { 
+                    Some("AES-256-GCM".to_string()) 
+                } else { 
+                    None 
+                },
                 location: None,
             };
 
@@ -149,11 +170,55 @@ impl MediaRecorder {
                 .map(|end| (end - segment.start_time).num_seconds() as u64);
             
             if let Some(mut process) = self.recording_processes.remove(&quality) {
-                let _ = process.kill().await;
+                // Properly terminate the process and wait for cleanup
+                if let Err(e) = process.kill().await {
+                    tracing::warn!("Failed to kill recording process: {}", e);
+                }
+                
+                // Wait for the process to fully terminate to prevent zombies
+                if let Err(e) = process.wait().await {
+                    tracing::warn!("Failed to wait for process cleanup: {}", e);
+                }
+                
+                tracing::info!("Recording process properly terminated for quality: {:?}", quality);
             }
 
             if let Ok(metadata) = fs::metadata(&segment.file_path).await {
                 segment.file_size = Some(metadata.len());
+            }
+
+            // Encrypt the recording if encryption is enabled
+            if let Some(encryptor) = &self.encryptor {
+                let original_path = PathBuf::from(&segment.file_path);
+                let encrypted_path = original_path.with_extension("encrypted.mp4");
+                
+                match encryptor.encrypt_video_file(&original_path, &encrypted_path).await {
+                    Ok(encryption_metadata) => {
+                        // Verify encrypted file exists and has reasonable size before deleting original
+                        if encrypted_path.exists() && encryption_metadata.encrypted_size > 0 {
+                            // Safely remove original unencrypted file
+                            if let Err(e) = fs::remove_file(&original_path).await {
+                                tracing::error!("Failed to remove original file after encryption: {}", e);
+                                // Keep both files rather than risk data loss
+                            } else {
+                                tracing::info!("Original unencrypted file safely removed after encryption");
+                            }
+                            
+                            // Update segment to point to encrypted file
+                            segment.file_path = encrypted_path.to_string_lossy().to_string();
+                            segment.file_size = Some(encryption_metadata.encrypted_size);
+                            
+                            tracing::info!("Successfully encrypted recording segment: {}", segment.id);
+                        } else {
+                            tracing::error!("Encrypted file verification failed - keeping original file");
+                            // Don't update segment path, keep original
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Failed to encrypt recording segment {}: {}", segment.id, e);
+                        // Continue without encryption rather than failing the entire operation
+                    }
+                }
             }
 
             // Create integrity record for the segment
@@ -211,9 +276,16 @@ async fn start_real_recording(
         if self.config.audio.enabled {
             cmd.arg("-f")
                .arg("alsa")
-               .arg("-i")
-               .arg(&self.config.audio.device_path)
-               .arg("-c:a")
+               .arg("-i");
+            
+            // Use configured device path or default
+            if let Some(ref device_path) = self.config.audio.device_path {
+                cmd.arg(device_path);
+            } else {
+                cmd.arg("default"); // Default ALSA device
+            }
+            
+            cmd.arg("-c:a")
                .arg("aac")
                .arg("-b:a")
                .arg(format!("{}", self.config.audio.bitrate));
@@ -350,14 +422,200 @@ async fn start_real_recording(
         }
         
         println!("Segment {} uploaded successfully", segment.id);
+        
+        // Auto-delete file after successful upload
+        let file_path = PathBuf::from(&segment.file_path);
+        if file_path.exists() {
+            match fs::remove_file(&file_path).await {
+                Ok(_) => {
+                    println!("Successfully deleted uploaded file: {}", segment.file_path);
+                    
+                    // Also delete associated metadata file
+                    let metadata_path = std::env::current_dir()?
+                        .join("recordings")
+                        .join("metadata")
+                        .join(format!("{}.json", segment.id));
+                    
+                    if metadata_path.exists() {
+                        let _ = fs::remove_file(&metadata_path).await;
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to delete uploaded file {}: {}", segment.file_path, e);
+                }
+            }
+        }
+        
         Ok(())
     }
 
     pub fn is_recording(&self) -> bool {
-        self.recording_process.is_some()
+        !self.recording_processes.is_empty()
     }
 
-    pub fn get_current_segment(&self) -> Option<&RecordingSegment> {
-        self.current_segment.as_ref()
+    pub fn get_current_segments(&self) -> &HashMap<VideoQuality, RecordingSegment> {
+        &self.current_segments
     }
+
+    pub async fn decrypt_recording(&self, segment: &RecordingSegment, output_path: &PathBuf) -> Result<()> {
+        if let Some(encryptor) = &self.encryptor {
+            let encrypted_path = PathBuf::from(&segment.file_path);
+            encryptor.decrypt_video_file(&encrypted_path, output_path).await?;
+            tracing::info!("Successfully decrypted recording segment: {}", segment.id);
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("No encryption configured - cannot decrypt recording"))
+        }
+    }
+
+    pub fn is_encryption_enabled(&self) -> bool {
+        self.encryptor.is_some()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StorageBreakdown {
+    pub quality: String,
+    pub video_count: usize,
+    pub total_size_mb: u64,
+    pub percentage: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediaFileInfo {
+    pub path: String,
+    pub size_bytes: u64,
+    pub quality: String,
+    pub duration_seconds: u64,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub incident_id: Option<String>,
+}
+
+pub async fn analyze_storage_usage(media_dir: &Path) -> Result<Vec<StorageBreakdown>> {
+    if !media_dir.exists() {
+        return Ok(vec![]);
+    }
+
+    let mut files = vec![];
+    let mut reader = tokio::fs::read_dir(media_dir).await?;
+
+    while let Some(entry) = reader.next_entry().await? {
+        let path = entry.path();
+        if path.is_file() {
+            let metadata = entry.metadata().await?;
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            
+            // Parse quality from filename
+            let quality = if file_name.contains("_ultra_") {
+                "Ultra"
+            } else if file_name.contains("_high_") {
+                "High"
+            } else if file_name.contains("_medium_") {
+                "Medium"
+            } else if file_name.contains("_low_") {
+                "Low"
+            } else {
+                "Unknown"
+            };
+
+            files.push((quality.to_string(), metadata.len()));
+        }
+    }
+
+    // Group by quality
+    let mut breakdown = std::collections::HashMap::new();
+    for (quality, size) in files {
+        let entry = breakdown.entry(quality).or_insert((0, 0u64));
+        entry.0 += 1;
+        entry.1 += size;
+    }
+
+    // Calculate percentages
+    let total_size: u64 = breakdown.values().map(|(_, size)| *size).sum();
+    let total_mb = total_size / (1024 * 1024);
+
+    let mut result: Vec<StorageBreakdown> = breakdown
+        .into_iter()
+        .map(|(quality, (count, size))| {
+            let size_mb = size / (1024 * 1024);
+            let percentage = if total_mb > 0 {
+                (size_mb as f64 / total_mb as f64) * 100.0
+            } else {
+                0.0
+            };
+
+            StorageBreakdown {
+                quality,
+                video_count: count,
+                total_size_mb: size_mb,
+                percentage,
+            }
+        })
+        .collect();
+
+    // Sort by quality priority
+    result.sort_by(|a, b| {
+        let priority = |q: &str| match q {
+            "Ultra" => 4,
+            "High" => 3,
+            "Medium" => 2,
+            "Low" => 1,
+            _ => 0,
+        };
+        priority(&b.quality).cmp(&priority(&a.quality))
+    });
+
+    Ok(result)
+}
+
+pub async fn get_media_files(media_dir: &Path) -> Result<Vec<MediaFileInfo>> {
+    if !media_dir.exists() {
+        return Ok(vec![]);
+    }
+
+    let mut files = vec![];
+    let mut reader = tokio::fs::read_dir(media_dir).await?;
+
+    while let Some(entry) = reader.next_entry().await? {
+        let path = entry.path();
+        if path.is_file() {
+            let metadata = entry.metadata().await?;
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            
+            // Parse metadata from filename
+            let quality = if file_name.contains("_ultra_") {
+                "Ultra"
+            } else if file_name.contains("_high_") {
+                "High"
+            } else if file_name.contains("_medium_") {
+                "Medium"
+            } else if file_name.contains("_low_") {
+                "Low"
+            } else {
+                "Unknown"
+            };
+
+            let incident_id = if file_name.contains("_incident_") {
+                file_name.split("_incident_")
+                    .nth(1)
+                    .and_then(|s| s.split('_').next())
+                    .map(|s| s.to_string())
+            } else {
+                None
+            };
+
+            let created_at = chrono::DateTime::from(metadata.modified()?);
+
+            files.push(MediaFileInfo {
+                path: path.to_string_lossy().to_string(),
+                size_bytes: metadata.len(),
+                quality: quality.to_string(),
+                duration_seconds: 0, // TODO: Parse from metadata
+                created_at,
+                incident_id,
+            });
+        }
+    }
+
+    Ok(files)
 }
